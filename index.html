@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stable Object Tracking Game</title>
+<style>
+body { margin:0; font-family:sans-serif; background:#222; color:white; display:flex; flex-direction:column; align-items:center; justify-content:center;}
+.screen { display:none; align-items:center; justify-content:center; height:100vh; flex-direction:column;}
+.active { display:flex; }
+video, canvas { border-radius:20px; margin-top:20px; }
+button { padding:10px 20px; font-size:18px; border-radius:10px; cursor:pointer; margin:10px; }
+</style>
+</head>
+<body>
+
+<!-- Screen 1: Camera & Calibration -->
+<div id="screen1" class="screen active">
+<h1>Allow Camera Access 🎥</h1>
+<button id="allowCamera">Allow Camera</button>
+<div id="calibrationDiv" style="display:none;">
+<h2>Hold your object in the red box</h2>
+<canvas id="calibrationCanvas" width="320" height="240" style="border:2px solid red;"></canvas>
+<button id="calibrateButton">Start Calibration</button>
+</div>
+</div>
+
+<!-- Screen 2: Game Menu -->
+<div id="screen2" class="screen">
+<h1>Camera Games</h1>
+<button id="startGame">Start Object Game</button>
+</div>
+
+<!-- Screen 3: Game -->
+<div id="screen3" class="screen">
+<h1>Catch the Falling Circles!</h1>
+<canvas id="gameCanvas" width="640" height="480"></canvas>
+<p>Move your calibrated object to catch circles!</p>
+<button id="backMenu">Back to Menu</button>
+</div>
+
+<script>
+const video = document.createElement('video');
+video.autoplay=true;
+video.playsInline=true;
+
+const screen1=document.getElementById('screen1');
+const screen2=document.getElementById('screen2');
+const screen3=document.getElementById('screen3');
+const allowCameraButton=document.getElementById('allowCamera');
+const startGameButton=document.getElementById('startGame');
+const backMenuButton=document.getElementById('backMenu');
+
+const calibrationDiv=document.getElementById('calibrationDiv');
+const calibrationCanvas=document.getElementById('calibrationCanvas');
+const calibrateButton=document.getElementById('calibrateButton');
+const calCtx=calibrationCanvas.getContext('2d');
+
+const gameCanvas=document.getElementById('gameCanvas');
+const ctx=gameCanvas.getContext('2d');
+
+let trackingColor=null; // {r,g,b, tolerance}
+let handX=gameCanvas.width/2, handY=gameCanvas.height/2;
+let circles=[], score=0;
+
+// --- Screens ---
+function showScreen(screen){
+  [screen1,screen2,screen3].forEach(s=>s.classList.remove('active'));
+  screen.classList.add('active');
+}
+
+// --- Camera ---
+allowCameraButton.addEventListener('click', async ()=>{
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({video:true});
+    video.srcObject = stream;
+    video.onloadedmetadata = ()=>{
+      calibrationDiv.style.display='flex';
+      requestAnimationFrame(drawCalibration);
+    };
+  }catch(err){alert('Camera access denied: '+err);}
+});
+
+// --- Calibration Draw ---
+function drawCalibration(){
+  calCtx.drawImage(video,0,0,calibrationCanvas.width,calibrationCanvas.height);
+  const boxSize=50;
+  calCtx.strokeStyle='red';
+  calCtx.lineWidth=2;
+  calCtx.strokeRect(calibrationCanvas.width/2-boxSize/2,calibrationCanvas.height/2-boxSize/2,boxSize,boxSize);
+  requestAnimationFrame(drawCalibration);
+}
+
+// --- Live Calibration ---
+calibrateButton.addEventListener('click', ()=>{
+  const samples=[];
+  const duration=3000; // 3 seconds
+  const startTime=performance.now();
+
+  function sampleColor(time){
+    const imageData=calCtx.getImageData(calibrationCanvas.width/2-25, calibrationCanvas.height/2-25,50,50).data;
+    let r=0,g=0,b=0,count=0;
+    for(let i=0;i<imageData.length;i+=4){
+      r+=imageData[i]; g+=imageData[i+1]; b+=imageData[i+2]; count++;
+    }
+    samples.push({r:r/count,g:g/count,b:b/count});
+    if(time - startTime < duration){
+      requestAnimationFrame(sampleColor);
+    }else{
+      // Compute average + tolerance
+      let rSum=0,gSum=0,bSum=0;
+      samples.forEach(s=>{rSum+=s.r; gSum+=s.g; bSum+=s.b;});
+      const rAvg=rSum/samples.length, gAvg=gSum/samples.length, bAvg=bSum/samples.length;
+      trackingColor={r:rAvg,g:gAvg,b:bAvg, tolerance:50}; // tolerance adjustable
+      showScreen(screen2);
+    }
+  }
+  requestAnimationFrame(sampleColor);
+});
+
+// --- Game ---
+startGameButton.addEventListener('click', initGame);
+backMenuButton.addEventListener('click', ()=>showScreen(screen2));
+
+function initGame(){
+  circles=[];
+  score=0;
+  for(let i=0;i<5;i++){
+    circles.push({x:Math.random()*gameCanvas.width, y:Math.random()*-500, r:20+Math.random()*20, speed:2+Math.random()*3});
+  }
+  showScreen(screen3);
+  requestAnimationFrame(gameLoop);
+}
+
+// --- Object Tracking ---
+function detectObject(){
+  if(!trackingColor) return;
+  const tempCanvas=document.createElement('canvas');
+  tempCanvas.width=video.videoWidth;
+  tempCanvas.height=video.videoHeight;
+  const tempCtx=tempCanvas.getContext('2d');
+  tempCtx.drawImage(video,0,0);
+  const frame=tempCtx.getImageData(0,0,tempCanvas.width,tempCanvas.height);
+  let x=handX,y=handY;
+  let totalX=0, totalY=0, count=0;
+  for(let i=0;i<frame.data.length;i+=4){
+    const r=frame.data[i], g=frame.data[i+1], b=frame.data[i+2];
+    const diff=Math.abs(r-trackingColor.r)+Math.abs(g-trackingColor.g)+Math.abs(b-trackingColor.b);
+    if(diff<trackingColor.tolerance){
+      const index=i/4;
+      const px=index%frame.width;
+      const py=Math.floor(index/frame.width);
+      totalX+=px;
+      totalY+=py;
+      count++;
+    }
+  }
+  if(count>0){
+    x=(totalX/count)*(gameCanvas.width/tempCanvas.width);
+    y=(totalY/count)*(gameCanvas.height/tempCanvas.height);
+  }
+  // Smooth
+  handX=handX*0.7 + x*0.3;
+  handY=handY*0.7 + y*0.3;
+}
+
+// --- Game Loop ---
+function gameLoop(){
+  ctx.clearRect(0,0,gameCanvas.width,gameCanvas.height);
+  detectObject();
+
+  // Draw hand
+  ctx.fillStyle='red';
+  ctx.beginPath();
+  ctx.arc(handX,handY,20,0,Math.PI*2);
+  ctx.fill();
+
+  // Circles
+  ctx.fillStyle='yellow';
+  circles.forEach(c=>{
+    c.y+=c.speed;
+    ctx.beginPath();
+    ctx.arc(c.x,c.y,c.r,0,Math.PI*2);
+    ctx.fill();
+    const dx=c.x-handX, dy=c.y-handY;
+    if(Math.sqrt(dx*dx+dy*dy)<c.r+20){
+      score++;
+      c.y=-50;
+      c.x=Math.random()*gameCanvas.width;
+    }
+    if(c.y>gameCanvas.height+50){
+      c.y=-50;
+      c.x=Math.random()*gameCanvas.width;
+    }
+  });
+
+  // Score
+  ctx.fillStyle='white';
+  ctx.font='20px sans-serif';
+  ctx.fillText('Score: '+score,10,30);
+
+  requestAnimationFrame(gameLoop);
+}
+</script>
+</body>
+</html>
