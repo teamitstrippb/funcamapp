@@ -3,15 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Magic Camera Fun</title>
+<title>Fun Camera</title>
 <style>
   body {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     background: #222;
     color: #fff;
     font-family: sans-serif;
+    height: 100vh;
+    margin: 0;
   }
   video, canvas {
     border-radius: 20px;
@@ -19,7 +22,7 @@
     max-width: 90%;
   }
   button {
-    margin: 5px;
+    margin-top: 10px;
     padding: 10px 20px;
     font-size: 16px;
     border-radius: 10px;
@@ -28,21 +31,17 @@
 </style>
 </head>
 <body>
-<h1>Magic Camera Fun 🎉</h1>
+<h1>Fun Camera 🎉</h1>
 <video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
-<div>
-  <button onclick="applyFilter('invert')">Invert Colors</button>
-  <button onclick="applyFilter('grayscale')">Grayscale</button>
-  <button onclick="applyFilter('none')">Normal</button>
-</div>
+<button id="filterBtn">Toggle Invert Filter</button>
 
 <script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-let filter = 'none';
+let filterOn = false;
 
 // Access webcam
 navigator.mediaDevices.getUserMedia({ video: true, audio: false })
@@ -56,31 +55,28 @@ navigator.mediaDevices.getUserMedia({ video: true, audio: false })
   })
   .catch(err => alert('Camera access denied: ' + err));
 
-// Draw video to canvas with filter
+// Draw video to canvas with optional filter
 function draw() {
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  let data = imageData.data;
 
-  for (let i = 0; i < data.length; i += 4) {
-    let r = data[i], g = data[i+1], b = data[i+2];
-    if (filter === 'invert') {
-      data[i] = 255 - r;
-      data[i+1] = 255 - g;
-      data[i+2] = 255 - b;
-    } else if (filter === 'grayscale') {
-      let avg = (r + g + b) / 3;
-      data[i] = data[i+1] = data[i+2] = avg;
+  if (filterOn) {
+    let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 255 - data[i];     // R
+      data[i+1] = 255 - data[i+1]; // G
+      data[i+2] = 255 - data[i+2]; // B
     }
+    ctx.putImageData(imageData, 0, 0);
   }
 
-  ctx.putImageData(imageData, 0, 0);
   requestAnimationFrame(draw);
 }
 
-function applyFilter(f) {
-  filter = f;
-}
+// Toggle filter
+document.getElementById('filterBtn').addEventListener('click', () => {
+  filterOn = !filterOn;
+});
 </script>
 </body>
 </html>
