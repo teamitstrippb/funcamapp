@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Object Tracking Game</title>
+<style>
+  body { margin:0; font-family:sans-serif; background:#222; color:white; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .screen { display:none; align-items:center; justify-content:center; height:100vh; flex-direction:column; }
+  .active { display:flex; }
+  canvas, video { border-radius:15px; margin-top:20px; }
+  button { padding:10px 20px; font-size:18px; border-radius:10px; cursor:pointer; margin:10px; }
+</style>
+</head>
+<body>
+
+<!-- Screen 1: Camera Access -->
+<div id="screen1" class="screen active">
+  <h1>Allow Camera Access 🎥</h1>
+  <button id="allowCamera">Allow Camera</button>
+</div>
+
+<!-- Screen 2: Object Calibration -->
+<div id="screen2" class="screen">
+  <h1>Calibrate Object</h1>
+  <p>Draw a rectangle around the object you want to track</p>
+  <canvas id="calibrationCanvas" width="640" height="480" style="border:2px solid red;"></canvas>
+  <button id="startGameBtn">Start Game</button>
+</div>
+
+<!-- Screen 3: Game -->
+<div id="screen3" class="screen">
+  <h1>Catch the Falling Circles!</h1>
+  <canvas id="gameCanvas" width="640" height="480"></canvas>
+  <p>Move your calibrated object to catch circles!</p>
+  <button id="backMenu">Back to Menu</button>
+</div>
+
+<!-- OpenCV.js -->
+<script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
+
+<script>
+let video = document.createElement('video');
+video.autoplay = true;
+video.playsInline = true;
+
+const screen1 = document.getElementById('screen1');
+const screen2 = document.getElementById('screen2');
+const screen3 = document.getElementById('screen3');
+
+const allowCameraBtn = document.getElementById('allowCamera');
+const calibrationCanvas = document.getElementById('calibrationCanvas');
+const calCtx = calibrationCanvas.getContext('2d');
+const startGameBtn = document.getElementById('startGameBtn');
+const gameCanvas = document.getElementById('gameCanvas');
+const gameCtx = gameCanvas.getContext('2d');
+const backMenuBtn = document.getElementById('backMenu');
+
+let templateMat = null;
+let objectRect = null;
+let isDrawing = false;
+
+let handX = gameCanvas.width/2, handY = gameCanvas.height/2;
+let circles = [], score = 0;
+
+// --- Screen Management ---
+function showScreen(screen) {
+  [screen1, screen2, screen3].forEach(s => s.classList.remove('active'));
+  screen.classList.add('active');
+}
+
+// --- Camera Access ---
+allowCameraBtn.addEventListener('click', async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({video:true});
+    video.srcObject = stream;
+    video.onloadedmetadata = () => {
+      showScreen(screen2);
+      requestAnimationFrame(drawCalibrationVideo);
+    };
+  } catch(e) { alert('Camera access denied: '+e); }
+});
+
+// --- Calibration Drawing ---
+function drawCalibrationVideo() {
+  calCtx.drawImage(video,0,0,calibrationCanvas.width,calibrationCanvas.height);
+  if(objectRect){
+    calCtx.strokeStyle = 'lime';
+    calCtx.lineWidth = 2;
+    calCtx.strokeRect(objectRect.x, objectRect.y, objectRect.width, objectRect.height);
+  }
+  requestAnimationFrame(drawCalibrationVideo);
+}
+
+// --- Calibration Mouse Events ---
+calibrationCanvas.addEventListener('mousedown', e => {
+  isDrawing = true;
+  const rect = calibrationCanvas.getBoundingClientRect();
+  objectRect = {x:e.clientX - rect.left, y:e.clientY - rect.top, width:0, height:0};
+});
+calibrationCanvas.addEventListener('mousemove', e => {
+  if(!isDrawing) return;
+  const rect = calibrationCanvas.getBoundingClientRect();
+  objectRect.width = (e.clientX - rect.left) - objectRect.x;
+  objectRect.height = (e.clientY - rect.top) - objectRect.y;
+});
+calibrationCanvas.addEventListener('mouseup', e => { isDrawing = false; });
+
+// --- OpenCV Loaded ---
+function onOpenCvReady() {
+  console.log('OpenCV.js is ready');
+}
+
+// --- Start Game ---
+startGameBtn.addEventListener('click', () => {
+  if(!objectRect || objectRect.width <= 0 || objectRect.height <=0) { alert('Draw a valid rectangle!'); return; }
+  // Capture template
+  let src = cv.imread(calibrationCanvas);
+  let rect = new cv.Rect(objectRect.x, objectRect.y, objectRect.width, objectRect.height);
+  templateMat = src.roi(rect);
+  src.delete();
+
+  initGame();
+  showScreen(screen3);
+  requestAnimationFrame(gameLoop);
+});
+
+// --- Game Initialization ---
+function initGame() {
+  circles = [];
+  score = 0;
+  for(let i=0;i<5;i++){
+    circles.push({x:Math.random()*gameCanvas.width, y:Math.random()*-500, r:20+Math.random()*20, speed:2+Math.random()*3});
+  }
+}
+
+// --- Object Tracking ---
+function detectObject() {
+  if(!templateMat) return;
+  let src = cv.imread(calibrationCanvas);
+  let result = new cv.Mat();
+  cv.matchTemplate(src, templateMat, result, cv.TM_CCOEFF_NORMED);
+  let minMax = cv.minMaxLoc(result);
+  let maxLoc = minMax.maxLoc;
+  handX = handX*0.7 + (maxLoc.x + templateMat.cols/2)*0.3;
+  handY = handY*0.7 + (maxLoc.y + templateMat.rows/2)*0.3;
+  src.delete(); result.delete();
+}
+
+// --- Game Loop ---
+function gameLoop(){
+  gameCtx.clearRect(0,0,gameCanvas.width,gameCanvas.height);
+  detectObject();
+
+  // Draw hand
+  gameCtx.fillStyle='red';
+  gameCtx.beginPath();
+  gameCtx.arc(handX,handY,20,0,Math.PI*2);
+  gameCtx.fill();
+
+  // Draw circles
+  gameCtx.fillStyle='yellow';
+  circles.forEach(c=>{
+    c.y+=c.speed;
+    gameCtx.beginPath();
+    gameCtx.arc(c.x,c.y,c.r,0,Math.PI*2);
+    gameCtx.fill();
+
+    const dx=c.x-handX, dy=c.y-handY;
+    if(Math.sqrt(dx*dx+dy*dy)<c.r+20){
+      score++;
+      c.y=-50;
+      c.x=Math.random()*gameCanvas.width;
+    }
+    if(c.y>gameCanvas.height+50){
+      c.y=-50;
+      c.x=Math.random()*gameCanvas.width;
+    }
+  });
+
+  // Score
+  gameCtx.fillStyle='white';
+  gameCtx.font='20px sans-serif';
+  gameCtx.fillText('Score: '+score,10,30);
+
+  requestAnimationFrame(gameLoop);
+}
+
+// --- Back to Menu ---
+backMenuBtn.addEventListener('click', ()=> showScreen(screen2));
+
+</script>
+</body>
+</html>
